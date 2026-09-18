@@ -1273,7 +1273,20 @@ def create_task(
     from hermes_cli.kanban_db_graph import initial_task_state, inherit_creator_origin
     from hermes_cli.kanban_pr_acceptance import validate_contract
 
+    # ``OWNER/REPO`` is documentation prose, not a resolvable repository.
+    # The shape validator accepts it, so reject the literal before persistence.
+    if completion_contract == "OWNER/REPO":
+        raise ValueError(
+            "completion_contract 'OWNER/REPO' is a placeholder, not a repository; "
+            "use 'local-only', a real 'owner/repo' (for example 'acme/hermes'), "
+            "or an exact GitHub PR URL"
+        )
     completion_contract = validate_contract(completion_contract)
+    # Every new task must carry an explicit creator attribution. Profile callers
+    # provide HERMES_PROFILE; direct API callers are visibly marked unknown.
+    created_by = str(created_by).strip() if created_by is not None else None
+    if not created_by:
+        created_by = (os.environ.get("HERMES_PROFILE") or "unknown").strip() or "unknown"
     model_override, provider_override = _validate_model_override(model_override, provider_override)
     reasoning_effort = normalize_reasoning_effort(reasoning_effort)
     assignee = _canonical_assignee(assignee)
@@ -1305,6 +1318,15 @@ def create_task(
     project_id, project_obj, project_repo, workspace_kind = _resolve_project_link(
         conn, project_id, project_source_task_id, workspace_kind, workspace_path
     )
+    if workspace_path is not None:
+        workspace_path = str(workspace_path).strip() or None
+    if workspace_kind == "worktree" and workspace_path is None and project_repo is None:
+        board_default = _board_meta_for(board).get("default_workdir")
+        if not board_default:
+            raise ValueError(
+                "workspace_kind 'worktree' requires an explicit workspace_path or a board "
+                "default_workdir; refusing an unspawnable card"
+            )
     parents = tuple(p for p in parents if p)
     skills_list = _normalize_task_skills(skills)
 
@@ -1376,6 +1398,7 @@ def create_task(
                         "assignee": assignee,
                         "status": task_status,
                         "parents": list(parents),
+                        "created_by": created_by,
                         "creator_task_id": creator_task_id,
                         "tenant": tenant,
                         "workspace_kind": workspace_kind,
