@@ -523,11 +523,14 @@ def _neutralize_delimiters(content: str) -> str:
 
 
 def _maybe_wrap_untrusted(name: str, content: Any) -> Any:
-    """Wrap high-risk tool content in untrusted-data delimiters: strings are neutralized and
-    wrapped in exactly one block; text parts of a multimodal list are wrapped individually
-    (outer list rebuilt — compare by value, not ``is``). Unchanged for non-high-risk tools,
-    non-str/list content, or short strings. Deliberately no "already wrapped" fast-path:
-    it would be attacker-forgeable, so harmless re-wrapping is the safe choice."""
+    """Wrap data-channel tool content in untrusted-data delimiters.
+
+    Strings are always wrapped regardless of length. Text parts of multimodal
+    results are wrapped individually, and image-bearing results receive a
+    framing text part covering the complete result. Non-data-channel tools and
+    non-str/list content are unchanged. There is deliberately no attacker-
+    forgeable "already wrapped" fast-path.
+    """
     if not _is_untrusted_tool(name):
         return content
     if isinstance(content, str):
