@@ -1,0 +1,4 @@
+name: agency-memory
+version: 1.0.0
+description: "Agency Memory — selective canonical organizational memory with scoped Postgres/GTE recall and cold-history fallback."
+hooks: []
