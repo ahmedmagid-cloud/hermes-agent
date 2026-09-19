@@ -895,13 +895,14 @@ mcp_servers:
   my_server:
     command: "my-mcp-server"
     sampling:
-      enabled: true            # Enable sampling (default: true)
-      model: "openai/gpt-4o"  # Override model for sampling requests (optional)
+      enabled: true            # Enable sampling (default: false; explicit opt-in)
+      model: "openai/gpt-4o"  # Local model override for sampling requests (optional)
       max_tokens_cap: 4096     # Max tokens per sampling response (default: 4096)
       timeout: 30              # Timeout in seconds per request (default: 30)
       max_rpm: 10              # Rate limit: max requests per minute (default: 10)
-      max_tool_rounds: 5       # Max tool-use rounds in sampling loops (default: 5)
+      max_tool_rounds: 0       # Recursive tool use disabled by default
       allowed_models: []       # Allowlist of model names the server may request (empty = any)
+      allow_server_model_hints: false # Ignore server model hints by default
       log_level: "info"        # Audit log level: debug, info, or warning (default: info)
 ```
 

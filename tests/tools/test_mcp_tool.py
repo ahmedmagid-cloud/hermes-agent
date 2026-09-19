@@ -2221,9 +2221,10 @@ class TestSamplingHandlerInit:
         assert h.max_rpm == 10
         assert h.timeout == 30
         assert h.max_tokens_cap == 4096
-        assert h.max_tool_rounds == 5
+        assert h.max_tool_rounds == 0
         assert h.model_override is None
         assert h.allowed_models == []
+        assert h.allow_server_model_hints is False
         assert h.metrics == {"requests": 0, "errors": 0, "tokens_used": 0, "tool_use_count": 0}
 
     def test_custom_config(self):
@@ -2234,6 +2235,7 @@ class TestSamplingHandlerInit:
             "max_tool_rounds": 3,
             "model": "gpt-4o",
             "allowed_models": ["gpt-4o", "gpt-3.5-turbo"],
+            "allow_server_model_hints": True,
             "log_level": "debug",
         }
         h = SamplingHandler("custom", cfg)
@@ -2243,6 +2245,7 @@ class TestSamplingHandlerInit:
         assert h.max_tool_rounds == 3
         assert h.model_override == "gpt-4o"
         assert h.allowed_models == ["gpt-4o", "gpt-3.5-turbo"]
+        assert h.allow_server_model_hints is True
 
 # ---------------------------------------------------------------------------
 # 3. Rate limiting
@@ -2279,9 +2282,14 @@ class TestResolveModel:
         prefs = SimpleNamespace(hints=[SimpleNamespace(name="hint-model")])
         assert self.handler._resolve_model(prefs) == "override-model"
 
-    def test_hint_used_when_no_override(self):
+    def test_server_hint_ignored_by_default(self):
         prefs = SimpleNamespace(hints=[SimpleNamespace(name="hint-model")])
-        assert self.handler._resolve_model(prefs) == "hint-model"
+        assert self.handler._resolve_model(prefs) is None
+
+    def test_server_hint_requires_explicit_local_opt_in(self):
+        handler = SamplingHandler("mr-opt-in", {"allow_server_model_hints": True})
+        prefs = SimpleNamespace(hints=[SimpleNamespace(name="hint-model")])
+        assert handler._resolve_model(prefs) == "hint-model"
 
 # ---------------------------------------------------------------------------
 # 5. Message conversion
@@ -2379,7 +2387,9 @@ class TestSamplingCallbackText:
 
 class TestSamplingCallbackToolUse:
     def setup_method(self):
-        self.handler = SamplingHandler("tu", {})
+        # Tool recursion is default-deny; this suite explicitly opts in to
+        # exercise the legacy compatible tool-use response path.
+        self.handler = SamplingHandler("tu", {"max_tool_rounds": 5})
 
     def test_tool_use_response(self):
         """LLM tool_calls response returns CreateMessageResultWithTools."""
@@ -2615,7 +2625,7 @@ class TestMCPServerTaskSamplingIntegration:
         # sampling setup portion directly.
         server._config = config
         sampling_config = config.get("sampling", {})
-        if sampling_config.get("enabled", True) and _MCP_SAMPLING_TYPES:
+        if sampling_config.get("enabled", False) and _MCP_SAMPLING_TYPES:
             server._sampling = SamplingHandler(server.name, sampling_config)
         else:
             server._sampling = None
@@ -2624,6 +2634,21 @@ class TestMCPServerTaskSamplingIntegration:
         assert isinstance(server._sampling, SamplingHandler)
         assert server._sampling.server_name == "int_test"
         assert server._sampling.max_rpm == 5
+
+    def test_sampling_handler_none_when_omitted(self):
+        """Sampling is capability-bearing and must be explicitly enabled."""
+        from tools.mcp_tool import MCPServerTask, _MCP_SAMPLING_TYPES
+
+        server = MCPServerTask("int_default_deny")
+        config = {"command": "fake"}
+        server._config = config
+        sampling_config = config.get("sampling", {})
+        if sampling_config.get("enabled", False) and _MCP_SAMPLING_TYPES:
+            server._sampling = SamplingHandler(server.name, sampling_config)
+        else:
+            server._sampling = None
+
+        assert server._sampling is None
 
     def test_sampling_handler_none_when_disabled(self):
         """MCPServerTask._sampling is None when sampling is disabled."""
@@ -2636,7 +2661,7 @@ class TestMCPServerTaskSamplingIntegration:
         }
         server._config = config
         sampling_config = config.get("sampling", {})
-        if sampling_config.get("enabled", True) and _MCP_SAMPLING_TYPES:
+        if sampling_config.get("enabled", False) and _MCP_SAMPLING_TYPES:
             server._sampling = SamplingHandler(server.name, sampling_config)
         else:
             server._sampling = None

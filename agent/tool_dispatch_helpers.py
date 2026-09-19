@@ -405,8 +405,9 @@ def make_tool_result_message(
     effect_disposition: str | None = None,
 ) -> dict:
     """Build a tool-result message: OpenAI ``name`` (wire format) plus internal ``tool_name``
-    (session DB). High-risk tool content (web_extract, web_search, browser_*, mcp_*) is
-    wrapped in untrusted-data delimiters — the defense against indirect prompt injection.
+    (session DB). Content from external or execution surfaces (web, browser, MCP,
+    terminal, file reads, and vision text) is wrapped in untrusted-data delimiters —
+    the defense against indirect prompt injection and content-as-authority attacks.
     """
     # Replay-recovery callers bypass the executor's canonical-id helper, so normalize here too.
     tool_call_id = _normalize_tool_call_id(tool_call_id)
@@ -432,10 +433,17 @@ def make_tool_result_message(
     return message
 
 
-# Tools whose results carry attacker-controllable content; outputs under 32 chars skip wrapping.
-_UNTRUSTED_TOOL_NAMES = frozenset({"web_extract", "web_search"})
+# Tool results are data, never authorization.  External/execution surfaces may carry
+# attacker-controlled or instruction-like content even when the payload is only a few bytes.
+_UNTRUSTED_TOOL_NAMES = frozenset({
+    "web_extract",
+    "web_search",
+    "terminal",
+    "read_file",
+    "vision_analyze",
+})
 _UNTRUSTED_TOOL_PREFIXES = ("browser_", "mcp_")
-_UNTRUSTED_WRAP_MIN_CHARS = 32
+_UNTRUSTED_WRAP_MIN_CHARS = 0
 
 # Case-insensitive so a differently-cased tag can't forge or prematurely close the boundary.
 _DELIMITER_TOKEN_RE = re.compile(r"untrusted_tool_result", re.IGNORECASE)
@@ -515,8 +523,8 @@ def _neutralize_delimiters(content: str) -> str:
 def _maybe_wrap_untrusted(name: str, content: Any) -> Any:
     """Wrap high-risk tool content in untrusted-data delimiters: strings are neutralized and
     wrapped in exactly one block; text parts of a multimodal list are wrapped individually
-    (outer list rebuilt — compare by value, not ``is``). Unchanged for non-high-risk tools,
-    non-str/list content, or short strings. Deliberately no "already wrapped" fast-path:
+    (outer list rebuilt — compare by value, not ``is``). Unchanged for non-high-risk tools
+    or non-str/list content. Deliberately no "already wrapped" fast-path:
     it would be attacker-forgeable, so harmless re-wrapping is the safe choice."""
     if not _is_untrusted_tool(name):
         return content

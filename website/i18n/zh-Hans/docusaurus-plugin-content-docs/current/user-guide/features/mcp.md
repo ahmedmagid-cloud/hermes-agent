@@ -462,13 +462,14 @@ mcp_servers:
   my_server:
     command: "my-mcp-server"
     sampling:
-      enabled: true            # 启用 sampling（默认：true）
-      model: "openai/gpt-4o"  # 覆盖 sampling 请求使用的模型（可选）
+      enabled: true            # 启用 sampling（默认：false；需显式启用）
+      model: "openai/gpt-4o"  # 本地配置的 sampling 模型覆盖（可选）
       max_tokens_cap: 4096     # 每次 sampling 响应的最大 token 数（默认：4096）
       timeout: 30              # 每次请求的超时时间，单位秒（默认：30）
       max_rpm: 10              # 速率限制：每分钟最大请求数（默认：10）
-      max_tool_rounds: 5       # sampling 循环中的最大工具调用轮数（默认：5）
+      max_tool_rounds: 0       # 默认禁用递归工具调用
       allowed_models: []       # 服务器可请求的模型名称白名单（空 = 不限）
+      allow_server_model_hints: false # 默认忽略服务器模型提示
       log_level: "info"        # 审计日志级别：debug、info 或 warning（默认：info）
 ```
 

@@ -97,9 +97,13 @@ class SamplingHandler:
         self.max_rpm = _safe_numeric(config.get("max_rpm", 10), 10, int)
         self.timeout = _safe_numeric(config.get("timeout", 30), 30, float)
         self.max_tokens_cap = _safe_numeric(config.get("max_tokens_cap", 4096), 4096, int)
-        self.max_tool_rounds = _safe_numeric(config.get("max_tool_rounds", 5), 5, int, minimum=0)
+        # Recursive server-requested tool loops are disabled unless explicitly enabled.
+        self.max_tool_rounds = _safe_numeric(config.get("max_tool_rounds", 0), 0, int, minimum=0)
         self.model_override = config.get("model")
         self.allowed_models = config.get("allowed_models", [])
+        # A remote MCP server must not silently steer model selection. Explicit local
+        # configuration may opt in when an operator intentionally wants server hints.
+        self.allow_server_model_hints = bool(config.get("allow_server_model_hints", False))
         self.audit_level = self._LOG_LEVELS.get(str(config.get("log_level", "info")).lower(), logging.INFO)
         self._rate_timestamps: List[float] = []
         self._tool_loop_count = 0
@@ -115,9 +119,11 @@ class SamplingHandler:
         return True
 
     def _resolve_model(self, preferences) -> Optional[str]:
-        """Config override > server hint > None (use default)."""
+        """Local config override > explicitly-authorized server hint > default model."""
         if self.model_override:
             return self.model_override
+        if not self.allow_server_model_hints:
+            return None
         hints = getattr(preferences, "hints", None) or []
         return next((hint.name for hint in hints if getattr(hint, "name", None)), None)
 
