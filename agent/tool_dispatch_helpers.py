@@ -501,8 +501,13 @@ def _tool_output_risk_metadata(name: str, content: Any) -> Optional[Dict[str, An
         return None
     if isinstance(content, str):
         text_parts = [content]
-    elif isinstance(content, list):
+    elif isinstance(content, list) and _is_multimodal_tool_result(content):
         text_parts = [item["text"] for item in content if _is_text_item(item)]
+    elif isinstance(content, (dict, list, tuple)):
+        try:
+            text_parts = [json.dumps(content, ensure_ascii=False, sort_keys=True, default=str)]
+        except Exception:
+            text_parts = [repr(content)]
     else:
         return None
     if not text_parts:
@@ -546,7 +551,7 @@ def _maybe_wrap_untrusted(name: str, content: Any) -> Any:
             f'{safe_content}\n'
             f'</untrusted_tool_result>'
         )
-    if isinstance(content, list):
+    if isinstance(content, list) and _is_multimodal_tool_result(content):
         rebuilt = [
             {**item, "text": _maybe_wrap_untrusted(name, item["text"])} if _is_text_item(item) else item
             for item in content
@@ -561,6 +566,12 @@ def _maybe_wrap_untrusted(name: str, content: Any) -> Any:
             )
             rebuilt.insert(0, {"type": "text", "text": frame})
         return rebuilt
+    if isinstance(content, (dict, list, tuple)):
+        try:
+            structured = json.dumps(content, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            structured = repr(content)
+        return _maybe_wrap_untrusted(name, structured)
     return content
 
 
