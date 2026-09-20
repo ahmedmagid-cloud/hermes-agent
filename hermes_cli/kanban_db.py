@@ -1240,6 +1240,89 @@ def _normalize_task_skills(skills: Optional[Iterable[str]]) -> Optional[list[str
     return cleaned
 
 
+def _auto_subscribe_gateway_origin(conn: sqlite3.Connection, task_id: str) -> bool:
+    """Best-effort completion subscription for tasks created inside a gateway turn.
+
+    Some higher-level mission tools create Kanban tasks by calling create_task
+    directly instead of going through tools.kanban_tools.kanban_create. The
+    tool wrapper auto-subscribes the originating Telegram/Discord/etc. session,
+    but direct DB callers historically did not, so a worker could complete
+    successfully with result evidence while the originating chat received no
+    completion message.
+
+    Only a real gateway context (platform + chat id) qualifies. CLI/cron/tests
+    without those anchors remain unsubscribed. The write is idempotent and
+    failure is deliberately non-fatal: task creation must not fail because
+    notification bookkeeping failed.
+    """
+    try:
+        from hermes_cli.config import cfg_get, load_config
+        if not cfg_get(load_config(), "kanban", "auto_subscribe_on_create", default=True):
+            return False
+    except Exception:
+        pass
+
+    try:
+        from gateway.session_context import get_session_env as env
+        platform = str(env("HERMES_SESSION_PLATFORM", "") or "").strip()
+        chat_id = str(env("HERMES_SESSION_CHAT_ID", "") or "").strip()
+        if not platform or not chat_id:
+            return False
+
+        chat_type = str(env("HERMES_SESSION_CHAT_TYPE", "") or "").strip() or None
+        thread_id = str(env("HERMES_SESSION_THREAD_ID", "") or "").strip() or None
+        message_id = str(env("HERMES_SESSION_MESSAGE_ID", "") or "").strip()
+        notifier_profile = str(env("HERMES_SESSION_PROFILE", "") or "").strip() or os.environ.get("HERMES_PROFILE")
+        if not notifier_profile:
+            try:
+                from hermes_cli.profiles import get_active_profile_name
+                notifier_profile = get_active_profile_name() or "default"
+            except Exception:
+                notifier_profile = "default"
+
+        delivery_metadata: dict[str, Any] = {
+            key: value for key, value in (
+                ("thread_id", thread_id),
+                ("chat_type", chat_type),
+                ("scope_id", str(env("HERMES_SESSION_SCOPE_ID", "") or "").strip()),
+                ("parent_chat_id", str(env("HERMES_SESSION_PARENT_CHAT_ID", "") or "").strip()),
+            ) if value
+        }
+        if platform.casefold() == "telegram" and thread_id and (chat_type or "").casefold() in {"dm", "direct", "private"}:
+            delivery_metadata["telegram_dm_topic_reply_fallback"] = True
+            if thread_id not in {"", "1"}:
+                delivery_metadata["direct_messages_topic_id"] = thread_id
+            if message_id:
+                delivery_metadata["telegram_reply_to_message_id"] = message_id
+
+        from hermes_cli import kanban_db_notify as _kbn
+        existing = _kbn.list_notify_subs(conn, task_id)
+        if any(
+            sub["platform"] == platform
+            and sub["chat_id"] == chat_id
+            and (sub.get("thread_id") or "") == (thread_id or "")
+            for sub in existing
+        ):
+            return True
+
+        _kbn.add_notify_sub(
+            conn,
+            task_id=task_id,
+            platform=platform,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            thread_id=thread_id,
+            user_id=str(env("HERMES_SESSION_USER_ID", "") or "").strip() or None,
+            user_id_alt=str(env("HERMES_SESSION_USER_ID_ALT", "") or "").strip() or None,
+            notifier_profile=notifier_profile,
+            delivery_mode="notify+wake",
+            delivery_metadata=delivery_metadata or None,
+        )
+        return True
+    except Exception as exc:
+        _log.warning("gateway-origin auto-subscribe failed for task %s: %r", task_id, exc)
+        return False
+
 def create_task(
     conn: sqlite3.Connection, *, title: str, body: Optional[str] = None,
     assignee: Optional[str] = None, created_by: Optional[str] = None,
@@ -1409,6 +1492,9 @@ def create_task(
                 # ACK-edge: the originating channel hears a child BLOCK, not just the fan-in.
                 inherit_creator_origin(conn, task_id, creator_task_id, created_at=now)
                 _inherit_notify_subs(conn, task_id, parents, created_at=now)
+            # Core fallback for higher-level mission tools that call create_task
+            # directly rather than the kanban_create tool wrapper.
+            _auto_subscribe_gateway_origin(conn, task_id)
             return task_id
         except sqlite3.IntegrityError:
             if attempt == 1:
