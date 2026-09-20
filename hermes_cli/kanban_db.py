@@ -2670,6 +2670,9 @@ def complete_task(
     :func:`request_review` applies. With no active run the handoff fields survive via
     :func:`_synthesize_ended_run`. ``summary`` (defaults to ``result``) and
     ``metadata`` land on the closing run for :func:`build_worker_context`.
+    When a worker supplies only ``summary``, the same text is also persisted to
+    ``tasks.result`` so task-row consumers and delivery reconcilers observe a
+    non-empty completion result instead of a terminal task with ``result=NULL``.
     ``created_cards`` are verified first — a phantom id raises
     :class:`HallucinatedCardsError` after an auditable event; afterwards the
     prose is scanned for unresolvable ``t_<hex>`` refs (advisory event only).
@@ -2684,6 +2687,12 @@ def complete_task(
         conn, task_id, metadata, summary=summary, result=result,
     )
     handoff_summary = summary if summary is not None else result
+    # Workers commonly complete with a structured run summary and no explicit
+    # task.result. Keep the run summary as the canonical handoff, but also
+    # backfill tasks.result so higher-level reconcilers/notifiers that consume
+    # the task row do not see a completed task with result=NULL and silently
+    # drop its completion delivery.
+    persisted_result = result if result is not None else handoff_summary
     acceptance = prepare_acceptance(conn, task_id, expected_run_id, metadata)
     if acceptance is False:
         return False
@@ -2717,7 +2726,7 @@ def complete_task(
                  WHERE id = ?
                    AND status IN ('running', 'ready', 'blocked', 'review')
                 """
-        params: tuple = (result, now, task_id)
+        params: tuple = (persisted_result, now, task_id)
         if expected_run_id is not None:
             sql += " AND current_run_id = ?"
             params = (*params, int(expected_run_id))
@@ -2743,10 +2752,10 @@ def complete_task(
             event_summary = _REVIEW_APPROVED_NOTE
         _append_event(
             conn, task_id, "completed",
-            _completed_event_payload(result, event_summary, verified_cards, metadata),
+            _completed_event_payload(persisted_result, event_summary, verified_cards, metadata),
             run_id=run_id,
         )
-    _flag_phantom_prose_refs(conn, task_id, run_id, summary, result, verified_cards)
+    _flag_phantom_prose_refs(conn, task_id, run_id, summary, persisted_result, verified_cards)
     # Success wipes the breaker counter (history stays on the event log).
     _clear_failure_counter(conn, task_id)
     recompute_ready(conn)  # separate txn so children see ``done``
