@@ -672,6 +672,30 @@ def test_complete_task_persists_scratch_artifacts_before_cleanup(kanban_home):
     ]
 
 
+def test_complete_task_backfills_result_from_summary_for_delivery_consumers(kanban_home):
+    """A summary-only worker completion must not leave tasks.result NULL.
+
+    Executive/notification reconcilers may consume the task row rather than
+    task_runs.summary. Persisting the same summary into result prevents a
+    completed task from becoming invisible to result delivery.
+    """
+    with kbc.connect() as conn:
+        task_id = kb.create_task(conn, title="summary-only completion")
+        assert kb.complete_task(conn, task_id, summary="WORKER_RESULT_READY")
+
+        task = kb.get_task(conn, task_id)
+        run = kb.latest_run(conn, task_id)
+        completed = [event for event in kb.list_events(conn, task_id) if event.kind == "completed"][-1]
+
+    assert task is not None
+    assert task.status == "done"
+    assert task.result == "WORKER_RESULT_READY"
+    assert run is not None
+    assert run.summary == "WORKER_RESULT_READY"
+    assert completed.payload["summary"] == "WORKER_RESULT_READY"
+    assert completed.payload["result_len"] == len("WORKER_RESULT_READY")
+
+
 def test_review_bound_handoff_preserves_declared_artifacts(kanban_home):
     """A review-bound card's declared files must outlive the reviewer's
     completion — that completion is what cleans the scratch workspace up."""
