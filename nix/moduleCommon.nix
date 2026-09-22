@@ -125,8 +125,8 @@ let
             options = {
               enabled = mkOption {
                 type = types.bool;
-                default = true;
-                description = "Enable sampling.";
+                default = false;
+                description = "Enable server-initiated sampling (explicit opt-in).";
               };
               model = mkOption {
                 type = types.nullOr types.str;
@@ -157,6 +157,11 @@ let
                 type = types.listOf types.str;
                 default = [ ];
                 description = "Models the server is allowed to request.";
+              };
+              allow_server_model_hints = mkOption {
+                type = types.bool;
+                default = false;
+                description = "Allow server model hints to steer sampling model selection.";
               };
               log_level = mkOption {
                 type = types.nullOr (
@@ -215,6 +220,7 @@ let
             max_rpm
             max_tool_rounds
             allowed_models
+            allow_server_model_hints
             log_level
             ;
         };

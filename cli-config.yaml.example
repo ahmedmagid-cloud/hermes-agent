@@ -643,14 +643,12 @@ compression:
   #   "claude-sonnet": 0.35
   #   "gpt-5": 0.30
 
-  # Optional absolute token cap for the compression trigger (default: null = disabled).
-  # When set, compression fires at the LOWER of the ratio-based threshold and this
-  # absolute token count — first-fires-wins. It never fires later than this count
-  # regardless of which model is active (useful when switching between models with
-  # very different context windows). Clamped to the model's context length at
-  # apply-time, so a cap above the window is a no-op (ratio-based threshold wins).
-  # Survives model switches and fallback activations.
-  # threshold_tokens: 200000
+  # Absolute token cap for the compression trigger (default: 256000).
+  # Compression fires at the LOWER of the ratio-based threshold and this count,
+  # bounding large-window sessions while lower proportional triggers still win
+  # whenever they fall below the cap. The cap survives model switches and fallbacks.
+  # Set null to restore ratio-only behavior.
+  threshold_tokens: 256000
 
   # Existing Codex gpt-5.5 behavior: raise Hermes' compaction trigger to 85%
   # for the ChatGPT Codex OAuth route. Set false to opt back down to threshold.
@@ -1509,19 +1507,20 @@ platform_toolsets:
 #     env:
 #       GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_..."
 #
-# Sampling (server-initiated LLM requests) — enabled by default.
+# Sampling (server-initiated LLM requests) — disabled by default; explicit opt-in.
 # Per-server config under the 'sampling' key:
 #   analysis:
 #     command: npx
 #     args: ["-y", "analysis-server"]
 #     sampling:
-#       enabled: true           # default: true
-#       model: "gemini-3-flash" # override model (optional)
+#       enabled: true           # default: false; must be explicitly enabled
+#       model: "gemini-3-flash" # local model override (optional)
 #       max_tokens_cap: 4096    # max tokens per request
 #       timeout: 30             # LLM call timeout (seconds)
 #       max_rpm: 10             # max requests per minute
 #       allowed_models: []      # model whitelist (empty = all)
-#       max_tool_rounds: 5      # tool loop limit (0 = disable)
+#       allow_server_model_hints: false # default: false
+#       max_tool_rounds: 0      # default: 0; recursive tool loop disabled
 #       log_level: "info"       # audit verbosity
 
 # =============================================================================
